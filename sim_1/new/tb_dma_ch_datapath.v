@@ -17,11 +17,9 @@
 // Revision 0.01 - File Created
 // Additional Comments:
 // 
-//////////////////////////////////////////////////////////////////////////////////
-
+//////////////////////////////////////////////////////////////////////////////////  
 
 `timescale 1ns / 1ps
-
 module tb_dma_ch_datapath();
 
     // =========================================================================
@@ -36,7 +34,7 @@ module tb_dma_ch_datapath();
     reg clk;
     reg resetn;
 
-    // Manager Control Signals
+    // Manager Control Signals (AXI4-LITE)
     reg                   ch_src_start;
     reg                   ch_dst_start;
     reg  [ADDR_WIDTH-1:0] ch_src_addr;
@@ -81,21 +79,39 @@ module tb_dma_ch_datapath();
         .DATA_WIDTH(DATA_WIDTH),
         .TRANS_W_STRB_W(TRANS_W_STRB_W),
         .TRANS_WR_RESP_W(TRANS_WR_RESP_W),
-        .TRANS_PROT(TRANS_PROT)
+        .TRANS_PROT(TRANS_PROT),
+        .SRC_IF_TYPE("AXI4_LITE"),   // Ép kiểu hoạt động
+        .DST_IF_TYPE("AXI4_LITE")    // Ép kiểu hoạt động
     ) dut (
         .clk_i(clk),
         .resetn_i(resetn),
 
-        // Manager Interface
-        .ch_src_start_i(ch_src_start),
-        .ch_dst_start_i(ch_dst_start),
-        .ch_src_addr_i(ch_src_addr),
-        .ch_dst_addr_i(ch_dst_addr),
-        .ch_src_done_o(ch_src_done),
-        .ch_dst_done_o(ch_dst_done),
+        // ---------------------------------------------------------------------
+        // AXI4-LITE Control Interface
+        // ---------------------------------------------------------------------
+        .axi_ch_src_start_i(ch_src_start),
+        .axi_ch_dst_start_i(ch_dst_start),
+        .axi_ch_src_addr_i(ch_src_addr),
+        .axi_ch_dst_addr_i(ch_dst_addr),
+        .axi_ch_src_done_o(ch_src_done),
+        .axi_ch_dst_done_o(ch_dst_done),
+        
         .fifo_full_o(fifo_full),
         .fifo_empty_o(fifo_empty),
 
+        // ---------------------------------------------------------------------
+        // AXIS Control Interface (Tied-off)
+        // ---------------------------------------------------------------------
+        .axis_ch_src_start_i(1'b0),
+        .axis_ch_dst_start_i(1'b0),
+        .axis_transfer_len_i(32'h0),
+        .axis_ch_auto_tlast_en_i(1'b0),
+        .axis_ch_src_done_o(),
+        .axis_ch_dst_done_o(),
+
+        // ---------------------------------------------------------------------
+        // AXI4-LITE Bus Interfaces
+        // ---------------------------------------------------------------------
         // Destination AXI
         .dst_m_axi_awaddr_o(dst_awaddr),
         .dst_m_axi_awvalid_o(dst_awvalid),
@@ -117,7 +133,24 @@ module tb_dma_ch_datapath();
         .src_m_axi_rdata_i(src_rdata),
         .src_m_axi_rresp_i(src_rresp),
         .src_m_axi_rvalid_i(src_rvalid),
-        .src_m_axi_rready_o(src_rready)
+        .src_m_axi_rready_o(src_rready),
+
+        // ---------------------------------------------------------------------
+        // AXI4-STREAM Interfaces (Tied-off)
+        // ---------------------------------------------------------------------
+        .s_axis_src_tvalid_i(1'b0),
+        .s_axis_src_tready_o(),
+        .s_axis_src_tdata_i(32'h0),
+        .s_axis_src_tstrb_i(0),
+        .s_axis_src_tkeep_i(0),
+        .s_axis_src_tlast_i(1'b0),
+
+        .m_axis_dst_tvalid_o(),
+        .m_axis_dst_tready_i(1'b0),
+        .m_axis_dst_tdata_o(),
+        .m_axis_dst_tstrb_o(),
+        .m_axis_dst_tkeep_o(),
+        .m_axis_dst_tlast_o()
     );
 
     // =========================================================================

@@ -110,22 +110,33 @@ module dma_ch_datapath#(
     parameter TRANS_PROT      = 3,
 
     // Interface configuration
-    parameter SRC_IF_TYPE       = "AXIS",    // TYPE: "AXI4_LITE", "AXIS", "HYPERRAM"
+    parameter SRC_IF_TYPE       = "AXIS",    // TYPE: "AXI4_LITE", "AXIS",
     parameter DST_IF_TYPE       = "AXIS"     // TYPE: "AXI4_LITE", "AXIS"
 )(  
     input                                clk_i,
     input                                resetn_i,
 
-    // --- Control signals from/to Channel Manager ---
-    input                                ch_src_start_i,    // Start signal for source interface from Manager
-    input                                ch_dst_start_i,    // Start signal for destination interface from Manager
-    input   [ADDR_WIDTH-1:0]             ch_src_addr_i,     // Source start address for reading
-    input   [ADDR_WIDTH-1:0]             ch_dst_addr_i,     // Destination start address for writing
-    input   [31:0]                       transfer_len_i,    // Length of the transfer in number of data words
-    input                                ch_auto_tlast_en_i,// Enable auto TLAST generation based on transfer length
-    output                               ch_src_done_o,     // Source transfer done flag
-    output                               ch_dst_done_o,     // Destination transfer done flag
-    
+
+    // =========================================================================
+    // --- Control signals from/to Channel Manager (AXI4-LITE MODE) ---
+    // =========================================================================
+    input                                axi_ch_src_start_i, // Start signal for source interface
+    input                                axi_ch_dst_start_i, // Start signal for destination interface
+    input   [ADDR_WIDTH-1:0]             axi_ch_src_addr_i,  // Source start address for reading
+    input   [ADDR_WIDTH-1:0]             axi_ch_dst_addr_i,  // Destination start address for writing
+    output                               axi_ch_src_done_o,  // Source transfer done flag
+    output                               axi_ch_dst_done_o,  // Destination transfer done flag
+    // =========================================================================
+    // --- Control signals from/to Channel Manager (AXIS MODE) ---
+    // =========================================================================
+    input                                axis_ch_src_start_i,    // Start signal for source interface
+    input                                axis_ch_dst_start_i,    // Start signal for destination interface
+    input   [31:0]                       axis_transfer_len_i,    // Length of the transfer in number of data words
+    input                                axis_ch_auto_tlast_en_i,// Enable auto TLAST generation based on length
+    output                               axis_ch_ready_o,        // Ready signal for source interface
+    output                               axis_ch_src_done_o,     // Source transfer done flag
+    output                               axis_ch_dst_done_o,     // Destination transfer done flag
+    // =========================================================================
     // FIFO status flags for the Channel Manager
     output                               fifo_full_o,
     output                               fifo_empty_o,
@@ -206,11 +217,11 @@ module dma_ch_datapath#(
             // 1. Source Branch (Read from AXI, push to FIFO)
             // When AXI read is complete (m_rd_done = 1), use this pulse to push data into the FIFO
             assign  fifo_wr = m_rd_done && !fifo_full_o; // Only write to FIFO if it's not full
-            assign  ch_src_done_o = m_rd_done; 
+            assign  axi_ch_src_done_o = m_rd_done; 
             // 2. Destination Branch (Pop from FIFO, write to AXI)
             // When Manager issues a write command (ch_dst_start_i = 1), simultaneously signal AXI Master to write and pop data from the FIFO
             assign  fifo_rd = m_wr_done && !fifo_empty_o; // Only read from FIFO if it's not empty
-            assign  ch_dst_done_o = m_wr_done;
+            assign  axi_ch_dst_done_o = m_wr_done;
 
             fifo_unit #(
                 .ADDR_WIDTH(8), 
@@ -240,14 +251,14 @@ module dma_ch_datapath#(
                 .aclk_i         (clk_i),
                 .aresetn_i      (resetn_i),
                 // Userside wr interface signals
-                .m_wr_start_i   (ch_dst_start_i),
-                .m_wr_addr_i    (ch_dst_addr_i),
+                .m_wr_start_i   (axi_ch_dst_start_i),
+                .m_wr_addr_i    (axi_ch_dst_addr_i),
                 .m_wr_data_i    (m_dst_rdata),
                 .m_wr_strb_i    ({(TRANS_W_STRB_W){1'b1}}), // Assuming all byte lanes are valid for simplicity
                 .m_wr_done_o    (m_wr_done),
                 // Userside rd interface signals
-                .m_rd_start_i   (ch_src_start_i),
-                .m_rd_addr_i    (ch_src_addr_i),
+                .m_rd_start_i   (axi_ch_src_start_i),
+                .m_rd_addr_i    (axi_ch_src_addr_i),
                 .m_rd_data_o    (m_src_data),
                 .m_rd_done_o    (m_rd_done),
                 // Bus connections
@@ -289,9 +300,9 @@ module dma_ch_datapath#(
                     stream_rx_cnt <= 0;
                 end else begin
                     // Only count when the source channel is enabled by Manager
-                    if (ch_src_start_i) begin
+                    if (axis_ch_src_start_i) begin
                         if (src_rx_fire) begin
-                            if (stream_rx_cnt == transfer_len_i - 1)
+                            if (stream_rx_cnt == axis_transfer_len_i - 1)
                                 stream_rx_cnt <= 0; // Reset counter for the next transfer block
                             else
                                 stream_rx_cnt <= stream_rx_cnt + 1;
@@ -301,12 +312,11 @@ module dma_ch_datapath#(
                     end
                 end
             end
-
             assign src_rx_fire = s_axis_src_tvalid_i && s_axis_src_tready_o;
             // Assert TLAST automatically when the counter reaches the final word of the transfer length
-            assign auto_tlast = (stream_rx_cnt == transfer_len_i - 1);
+            assign auto_tlast = (stream_rx_cnt == axis_transfer_len_i - 1);
             // Multiplexer: Select between generated auto_tlast and incoming source tlast
-            assign actual_tlast = ch_auto_tlast_en_i ? auto_tlast : s_axis_src_tlast_i;
+            assign actual_tlast = axis_ch_auto_tlast_en_i ? auto_tlast : s_axis_src_tlast_i;
             
 
             wire                          user_s_ready;
@@ -319,7 +329,7 @@ module dma_ch_datapath#(
             // Only active when Manager gives start signals, Slave has data, and Master is not busy
             wire    axis_transfer;
             wire    axis_transfer_delay;
-            assign  axis_transfer = (user_s_ready) && (!user_m_busy) && (ch_src_start_i) && (ch_dst_start_i);
+            assign  axis_transfer = (user_s_ready) && (!user_m_busy) && (axis_ch_src_start_i) && (axis_ch_dst_start_i);
 
 
             register_DFF #(
@@ -340,8 +350,7 @@ module dma_ch_datapath#(
             axis_align_flush_ctrl align_flush_uut(
                 .clk_i            (clk_i),
                 .resetn_i         (resetn_i),
-                .transfer_len_i   (transfer_len_i),
-                .user_s_ready_i   (user_s_ready),
+                .transfer_len_i   (axis_transfer_len_i),
                 .axis_transfer_i  (axis_transfer),
                 .axis_src_rd_o    (align_src_rd),
                 .axis_dst_wr_en_o (align_dst_wr_en)
@@ -428,10 +437,11 @@ module dma_ch_datapath#(
             // 3. Status Flags mapping for the Manager
             assign fifo_full_o  = user_m_busy;
             assign fifo_empty_o = !user_s_ready;
-            
+
             // 4. Done Flags (Triggers when TLAST passes through Handshake)
-            assign ch_src_done_o = s_axis_src_tvalid_i && s_axis_src_tready_o && s_axis_src_tlast_i;
-            assign ch_dst_done_o = m_axis_dst_tvalid_o && m_axis_dst_tready_i && m_axis_dst_tlast_o;
+            assign axis_ch_src_done_o = s_axis_src_tvalid_i && s_axis_src_tready_o && actual_tlast;
+            assign axis_ch_dst_done_o = m_axis_dst_tvalid_o && m_axis_dst_tready_i && m_axis_dst_tlast_o;
+            assign axis_ch_ready_o = !user_s_ready; // Indicate ready to receive data from source
 
         end
         
@@ -444,7 +454,6 @@ module axis_align_flush_ctrl(
     input               clk_i,
     input               resetn_i,
     input    [31:0]     transfer_len_i,
-    input               user_s_ready_i,
     // Control signals output to FIFO
     input               axis_transfer_i, // Indicates an active transfer is in progress
     output              axis_src_rd_o,    // Command to pull data from Source
@@ -452,7 +461,6 @@ module axis_align_flush_ctrl(
 );
 
     reg [31:0]  internal_length_count_next, internal_length_count_reg;
-    reg [1:0]   byte_count_next, byte_count_reg;
     reg         src_rd_next, src_rd_reg;
     reg         dst_wr_next, dst_wr_reg;
     reg         start_transfer_flag_reg, start_transfer_flag_next;
@@ -460,13 +468,11 @@ module axis_align_flush_ctrl(
 
     always @(posedge clk_i or negedge resetn_i) begin
         if (~resetn_i) begin
-            byte_count_reg <= 2'b0;
             src_rd_reg <= 1'b0;
             dst_wr_reg <= 1'b1; // Default to write disabled
             internal_length_count_reg <= 0;
             start_transfer_flag_reg <= 0;
         end else begin
-            byte_count_reg <= byte_count_next;
             src_rd_reg <= src_rd_next;
             dst_wr_reg <= dst_wr_next;
             internal_length_count_reg <= internal_length_count_next;
@@ -475,35 +481,24 @@ module axis_align_flush_ctrl(
     end
     
     always @(*) begin
-        byte_count_next = byte_count_reg;
         src_rd_next = src_rd_reg;
         dst_wr_next = dst_wr_reg;
         internal_length_count_next = internal_length_count_reg;
         start_transfer_flag_next = start_transfer_flag_reg;
-        if (axis_transfer_i) begin
-
+        if (axis_transfer_i == 1) begin
             internal_length_count_next = internal_length_count_reg + 1;
-            byte_count_next = byte_count_reg + 1;
-            if (byte_count_reg == 2'b01) begin
-                byte_count_next = 0;
-            end
-            if (byte_count_reg == transfer_len_i) begin
-                internal_length_count_reg = 0;
-            end
         end
         if (axis_transfer_i == 0) begin
             src_rd_next = 0;
             dst_wr_next = 1;
-            byte_count_next = 0;
             internal_length_count_next = 0;
         end
-        if ((axis_transfer_i == 1) && (byte_count_reg == 2'b00) && (internal_length_count_reg >= transfer_len_i - 1)) begin
+        if ((axis_transfer_i == 1) && (internal_length_count_reg >= transfer_len_i - 1)) begin
             src_rd_next = 1;
             dst_wr_next = 0;
         end
     end
-
-
+    
     assign axis_src_rd_o = src_rd_reg;
     assign axis_dst_wr_en_o = dst_wr_reg;
 

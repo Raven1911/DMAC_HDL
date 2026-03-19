@@ -20,8 +20,6 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 
-`timescale 1ns / 1ps
-
 module tb_dma_ch_datapath_axis();
 
     // =========================================================================
@@ -30,11 +28,13 @@ module tb_dma_ch_datapath_axis();
     parameter ADDR_WIDTH = 32;
     parameter DATA_WIDTH = 32;
     parameter TRANS_W_STRB_W = 4;
+    parameter TRANS_WR_RESP_W = 2;
+    parameter TRANS_PROT = 3;
 
     reg clk;
     reg resetn;
 
-    // --- Manager Control Signals ---
+    // --- Manager Control Signals (AXIS) ---
     reg                   ch_src_start;
     reg                   ch_dst_start;
     reg  [31:0]           transfer_len;
@@ -67,35 +67,65 @@ module tb_dma_ch_datapath_axis();
         .ADDR_WIDTH(ADDR_WIDTH),
         .DATA_WIDTH(DATA_WIDTH),
         .TRANS_W_STRB_W(TRANS_W_STRB_W),
+        .TRANS_WR_RESP_W(TRANS_WR_RESP_W),
+        .TRANS_PROT(TRANS_PROT),
         .SRC_IF_TYPE("AXIS"),
         .DST_IF_TYPE("AXIS")
     ) dut (
         .clk_i(clk),
         .resetn_i(resetn),
 
-        // Manager Interface
-        .ch_src_start_i(ch_src_start),
-        .ch_dst_start_i(ch_dst_start),
-        .ch_src_addr_i(32'h00000000), // Unused in AXIS mode
-        .ch_dst_addr_i(32'h00000000), // Unused in AXIS mode
-        .transfer_len_i(transfer_len),
-        .ch_auto_tlast_en_i(ch_auto_tlast_en),
-        .ch_src_done_o(ch_src_done),
-        .ch_dst_done_o(ch_dst_done),
+        // ---------------------------------------------------------------------
+        // AXI4-LITE Control Interface (Tied-off for AXIS mode testbench)
+        // ---------------------------------------------------------------------
+        .axi_ch_src_start_i(1'b0),
+        .axi_ch_dst_start_i(1'b0),
+        .axi_ch_src_addr_i(32'h00000000), 
+        .axi_ch_dst_addr_i(32'h00000000), 
+        .axi_ch_src_done_o(),             // Unconnected in AXIS TB
+        .axi_ch_dst_done_o(),             // Unconnected in AXIS TB
+
+        // ---------------------------------------------------------------------
+        // AXIS Control Interface
+        // ---------------------------------------------------------------------
+        .axis_ch_src_start_i(ch_src_start),
+        .axis_ch_dst_start_i(ch_dst_start),
+        .axis_transfer_len_i(transfer_len),
+        .axis_ch_auto_tlast_en_i(ch_auto_tlast_en),
+        .axis_ch_src_done_o(ch_src_done),
+        .axis_ch_dst_done_o(ch_dst_done),
+        
         .fifo_full_o(fifo_full),
         .fifo_empty_o(fifo_empty),
 
-        // Dummy ties for AXI-Lite inputs
+        // ---------------------------------------------------------------------
+        // AXI4-LITE Bus Interfaces (Dummy ties for unused interface)
+        // ---------------------------------------------------------------------
+        .dst_m_axi_awaddr_o(),
+        .dst_m_axi_awvalid_o(),
         .dst_m_axi_awready_i(1'b0),
+        .dst_m_axi_awprot_o(),
+        .dst_m_axi_wdata_o(),
+        .dst_m_axi_wstrb_o(),
+        .dst_m_axi_wvalid_o(),
         .dst_m_axi_wready_i(1'b0),
         .dst_m_axi_bresp_i(2'b00),
         .dst_m_axi_bvalid_i(1'b0),
+        .dst_m_axi_bready_o(),
+
+        .src_m_axi_araddr_o(),
+        .src_m_axi_arvalid_o(),
         .src_m_axi_arready_i(1'b0),
+        .src_m_axi_arprot_o(),
         .src_m_axi_rdata_i(32'h0),
         .src_m_axi_rresp_i(2'b00),
         .src_m_axi_rvalid_i(1'b0),
+        .src_m_axi_rready_o(),
 
-        // AXI4-Stream Source Interface
+        // ---------------------------------------------------------------------
+        // AXI4-STREAM Interfaces
+        // ---------------------------------------------------------------------
+        // Source Interface
         .s_axis_src_tvalid_i(s_axis_tvalid),
         .s_axis_src_tready_o(s_axis_tready),
         .s_axis_src_tdata_i(s_axis_tdata),
@@ -103,7 +133,7 @@ module tb_dma_ch_datapath_axis();
         .s_axis_src_tkeep_i(s_axis_tkeep),
         .s_axis_src_tlast_i(s_axis_tlast),
 
-        // AXI4-Stream Destination Interface
+        // Destination Interface
         .m_axis_dst_tvalid_o(m_axis_tvalid),
         .m_axis_dst_tready_i(m_axis_tready),
         .m_axis_dst_tdata_o(m_axis_tdata),
